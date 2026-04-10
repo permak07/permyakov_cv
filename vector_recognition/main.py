@@ -45,15 +45,16 @@ def classificator(region, templates):
             min_d = d
     return result
 
-template = imread('Alphabet-small.png')[:, :, :-1]
-print(template.shape)
+template = imread('Alphabet-small.png')[:, :, :3]
 template = template.sum(2)
 binary = template != 765
 
 labeled = label(binary)
 props = regionprops(labeled)
+props = sorted(props, key=lambda r: r.bbox[1])
 
 templates = dict()
+
 
 for region, symbol in zip(props, ['8', '0', 'A', 'B', '1', 'W', 'X', '*', '/', '-']):
         templates[symbol] = extractor(region)
@@ -80,6 +81,8 @@ for region in a_props:
     plt.imshow(region.image)
     plt.savefig(image_path / f'image_{region.label}.png')
 
-print(f"Распознано: {a_templates['8']} символов")
+for symbol, count in sorted(a_templates.items()):
+    print(f"Символ {symbol}: {count}")
+    
 plt.imshow(a_binary)
 plt.show()
