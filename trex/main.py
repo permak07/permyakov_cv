@@ -16,99 +16,124 @@ time.sleep(0.3)
 
 # Игровое поле
 monitor = {
-    "top": 272, 
-    "left": 575, 
-    "width": 520, 
+    "top": 272,
+    "left": 575,
+    "width": 520,
     "height": 145
 }
 
-# Настройки геометрии зон обнаружения препятствий
-DINO_RIGHT = 90       # Правая граница динозаврика внутри кадра
-ZONE_OFFSET = 15      # Дистанция от динозавра до начала зоны сканирования
-ZONE_WIDTH = 100      # Ширина зоны сканирования
+# Настройки геометрии
+DINO_RIGHT = 90
 
-# считаем итоговые X-координаты зоны сканирования
-ZONE_X1 = DINO_RIGHT + ZONE_OFFSET
-ZONE_X2 = ZONE_X1 + ZONE_WIDTH
+# Адаптивная зона: стартуем с 80, растём до 150 за 60 сек
+BASE_ZONE_OFFSET = 12
+BASE_ZONE_WIDTH =80
+MAX_ZONE_WIDTH = 150    
+RAMP_TIME = 60.0
 
-# Вертикальные координаты зон (высота)
-GROUND_Y1, GROUND_Y2 = 105, 135  # Кактусы
+# Вертикальные координаты зон
+GROUND_Y1, GROUND_Y2 = 105, 135 # Кактусы
 AIR_Y1, AIR_Y2 = 50, 95         # Птицы
 
-# Пороги кактусов и птиц
+# Пороги
 GROUND_THRESH = 40
 AIR_THRESH = 30
 
-# Переменные для контроля времени и состояний клавиш
+# Переменные времени и состояний
+start_time = time.time()
 last_jump = 0.0
-JUMP_COOLDOWN = 0.08    # Минимальный перерыв между прыжками
-ducking = False         # ПРиседание
-DUCK_EXTRA_TIME = 0.12  # Сколько времени удерживать кнопку приседания
+JUMP_COOLDOWN = 0.06
+JUMP_DURATION = 0.60
+
+ducking = False
+DUCK_EXTRA_TIME = 0.25
 duck_until = 0.0
+jump_until = 0.0
 
 while True:
     t0 = time.time()
 
     img = np.array(sct.grab(monitor))
     gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
-    
+
     # Перевод в чёрно-белое
     _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
-    
+
+    # Адаптация зоны сканирования
+    elapsed = time.time() - start_time
+    speed_ratio = min(elapsed / RAMP_TIME, 1.0)
+
+    zone_offset = int(BASE_ZONE_OFFSET + 20 * speed_ratio)
+    zone_width = int(BASE_ZONE_WIDTH + (MAX_ZONE_WIDTH - BASE_ZONE_WIDTH) * speed_ratio)
+
+    zone_x1 = DINO_RIGHT + zone_offset
+    zone_x2 = zone_x1 + zone_width
+
     # Зоны: кактусы и птицы
-    ground_zone = thresh[GROUND_Y1:GROUND_Y2, ZONE_X1:ZONE_X2]
-    air_zone = thresh[AIR_Y1:AIR_Y2, ZONE_X1:ZONE_X2]
-    
-    # Кол-во белых пикселей в каждой зоне
+    ground_zone = thresh[GROUND_Y1:GROUND_Y2, zone_x1:zone_x2]
+    air_zone = thresh[AIR_Y1:AIR_Y2, zone_x1:zone_x2]
+
+    # Кол-во белых пикселей
     ground_pixels = cv2.countNonZero(ground_zone)
     air_pixels = cv2.countNonZero(air_zone)
-    
+
     now = time.time()
-    
-    # Проверяем, превышен ли порог обнаружения объектов
+    is_jumping = now < jump_until
+
+    # Проверка объектов
     has_ground = ground_pixels > GROUND_THRESH
     has_air = air_pixels > AIR_THRESH
-    
-    # Проверка на кактус
+
     is_cactus = has_ground
-    # Проверка на птицу
     is_bird = has_air and not has_ground
 
-    # Если обнаружен кактус и прошло время прыжка -> ПРЫГАЕМ
-    if is_cactus and (now - last_jump) > JUMP_COOLDOWN:
+    # Если обнаружен кактус и мы на земле -> ПРЫГАЕМ
+    if is_cactus and (now - last_jump) > JUMP_COOLDOWN and not is_jumping:
         pyautogui.press('space')
         last_jump = now
-        # Если мы в это время приседали — отменяем приседание
+        jump_until = now + JUMP_DURATION
+        # Если приседали — отменяем приседание
         if ducking:
             pyautogui.keyUp('down')
             ducking = False
             duck_until = 0
-            
-    # Если обнаружена птица в воздухе -> ПРИСЕДАЕМ
-    elif is_bird:
+
+    # Если обнаружена птица в воздухе и мы на земле -> ПРИСЕДАЕМ
+    elif is_bird and not is_jumping:
         if not ducking:
             pyautogui.keyDown('down')
             ducking = True
-        duck_until = now + DUCK_EXTRA_TIME  # Продлеваем время приседания
+        duck_until = now + DUCK_EXTRA_TIME
 
     # Отпускаем кнопку приседания, если время вышло и птицы больше нет
     if ducking and now > duck_until and not is_bird:
         pyautogui.keyUp('down')
         ducking = False
 
-    
     # Рисуем рамки зон: зеленая (земля), синяя (воздух)
-    cv2.rectangle(img, (ZONE_X1, GROUND_Y1), (ZONE_X2, GROUND_Y2), (0, 255, 0), 2)
-    cv2.rectangle(img, (ZONE_X1, AIR_Y1), (ZONE_X2, AIR_Y2), (255, 0, 0), 2)
-        
-    # FPS
+    cv2.rectangle(img, (zone_x1, GROUND_Y1), (zone_x2, GROUND_Y2), (0, 255, 0), 2)
+    cv2.rectangle(img, (zone_x1, AIR_Y1), (zone_x2, AIR_Y2), (255, 0, 0), 2)
+
+    # FPS и ширина зоны
     fps = 1.0 / (time.time() - t0 + 0.001)
-    cv2.putText(img, f"FPS:{int(fps)}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    
+    info = f"FPS:{int(fps)} W:{zone_width}"
+    cv2.putText(img, info, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
     cv2.imshow("Dino", img)
-    
-    if cv2.waitKey(1) == ord('q'):
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
+
+    # Сброс таймера
+    elif key == ord('r'):
+        start_time = time.time()
+        last_jump = 0.0
+        jump_until = 0.0
+        if ducking:
+            pyautogui.keyUp('down')
+            ducking = False
+        duck_until = 0.0
+        print("Таймер сброшен. Зона вернулась к стартовой.")
 
 cv2.destroyAllWindows()
